@@ -23,6 +23,10 @@ final class DirectoryViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(reloadFiles), name: .didChangeSortSetting, object: nil)
+           NotificationCenter.default.addObserver(self, selector: #selector(reloadFiles), name: .didChangeSizeSetting, object: nil)
+        
         title = path.lastPathComponent == "Documents" ? "Файлы и папки" : path.lastPathComponent
         loadDirectoryContents()
 
@@ -61,7 +65,6 @@ final class DirectoryViewController: UITableViewController {
 
         if let originalImage = cell.imageView?.image {
             let targetSize = CGSize(width: 40, height: 40)
-
             let renderer = UIGraphicsImageRenderer(size: targetSize)
             let resizedImage = renderer.image { _ in
                 originalImage.draw(in: CGRect(origin: .zero, size: targetSize))
@@ -74,7 +77,9 @@ final class DirectoryViewController: UITableViewController {
             cell.imageView?.layer.masksToBounds = true
         }
 
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
+        let showSize = UserDefaults.standard.bool(forKey: "showFileSize")
+        if showSize,
+           let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
            let fileSize = attributes[.size] as? Int,
            let creationDate = attributes[.creationDate] as? Date {
             let formatter = DateFormatter()
@@ -83,6 +88,8 @@ final class DirectoryViewController: UITableViewController {
 
             let sizeKB = Double(fileSize) / 1024.0
             cell.detailTextLabel?.text = String(format: "%.1f KB • %@", sizeKB, formatter.string(from: creationDate))
+        } else {
+            cell.detailTextLabel?.text = nil
         }
 
         return cell
@@ -131,20 +138,27 @@ final class DirectoryViewController: UITableViewController {
     }
 
     private func loadDirectoryContents() {
-        let unsortedItems = FileManagerService.shared.contentsOfDirectory(at: path)
+        let allItems = FileManagerService.shared.contentsOfDirectory(at: path)
 
-        items = unsortedItems.sorted { a, b in
-            var isDirA: ObjCBool = false
-            var isDirB: ObjCBool = false
+        let folders = allItems.filter { url in
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            return isDir.boolValue
+        }
 
-            FileManager.default.fileExists(atPath: a.path, isDirectory: &isDirA)
-            FileManager.default.fileExists(atPath: b.path, isDirectory: &isDirB)
+        let files = allItems.filter { url in
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            return !isDir.boolValue
+        }
 
-            if isDirA.boolValue != isDirB.boolValue {
-                return isDirA.boolValue
-            }
+        let sortAlphabetically = UserDefaults.standard.bool(forKey: "sortAlphabetically")
 
-            return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
+        if sortAlphabetically {
+            items = folders.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() } +
+                    files.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() }
+        } else {
+            items = folders + files
         }
 
         tableView.reloadData()
@@ -170,6 +184,14 @@ final class DirectoryViewController: UITableViewController {
         picker.sourceType = .photoLibrary
         picker.delegate = self
         present(picker, animated: true)
+    }
+    
+    @objc private func reloadFiles() {
+        loadDirectoryContents()
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
 

@@ -11,9 +11,6 @@ final class DirectoryViewController: UITableViewController {
 
     private var path: URL
     private var items: [URL] = []
-    private var isSelectionMode = false
-    private var selectedItems = Set<IndexPath>()
-    private var deleteButton: UIButton?
 
     init(path: URL? = nil) {
         self.path = path ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -27,16 +24,12 @@ final class DirectoryViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = path.lastPathComponent == "Documents" ? "Файлы и папки" : path.lastPathComponent
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
         loadDirectoryContents()
 
         navigationItem.rightBarButtonItems = [
             UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addImageTapped)),
-            UIBarButtonItem(image: UIImage(systemName: "folder.badge.plus"), style: .plain, target: self, action: #selector(addFolderTapped)),
-            UIBarButtonItem(image: UIImage(systemName: "checkmark.circle"), style: .plain, target: self,action: #selector(toggleSelectionMode)),
-        
+            UIBarButtonItem(image: UIImage(systemName: "folder.badge.plus"), style: .plain, target: self, action: #selector(addFolderTapped))
         ]
-        
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -44,62 +37,99 @@ final class DirectoryViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: "Cell")
         let item = items[indexPath.row]
 
         var isDirectory: ObjCBool = false
         FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory)
-        
-        cell.selectionStyle = .none
 
-        if isSelectionMode {
-            let isSelected = selectedItems.contains(indexPath)
-            cell.accessoryView = UIImageView(image: UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle"))
-            cell.accessoryView?.tintColor = .systemBlue
-        } else {
-            cell.accessoryView = nil
-            var isDirectory: ObjCBool = false
-            FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory)
-            cell.accessoryType = isDirectory.boolValue ? .disclosureIndicator : .none
-        }
+        cell.selectionStyle = .none
+        cell.accessoryType = isDirectory.boolValue ? .disclosureIndicator : .none
+        cell.accessoryView = nil
 
         cell.textLabel?.text = item.lastPathComponent
-        cell.imageView?.image = UIImage(systemName: isDirectory.boolValue ? "folder" : "photo")
-        cell.imageView?.tintColor = .systemBlue
-        cell.imageView?.contentMode = .scaleAspectFit
 
-        cell.setNeedsLayout()
+        if isDirectory.boolValue {
+            cell.imageView?.image = UIImage(systemName: "folder")
+        } else if item.pathExtension.lowercased() == "png",
+                  let data = try? Data(contentsOf: item),
+                  let image = UIImage(data: data) {
+            cell.imageView?.image = image
+        } else {
+            cell.imageView?.image = UIImage(systemName: "doc")
+        }
+
+        if let originalImage = cell.imageView?.image {
+            let targetSize = CGSize(width: 40, height: 40)
+
+            let renderer = UIGraphicsImageRenderer(size: targetSize)
+            let resizedImage = renderer.image { _ in
+                originalImage.draw(in: CGRect(origin: .zero, size: targetSize))
+            }
+
+            cell.imageView?.image = resizedImage
+            cell.imageView?.contentMode = .scaleAspectFill
+            cell.imageView?.clipsToBounds = true
+            cell.imageView?.layer.cornerRadius = 4
+            cell.imageView?.layer.masksToBounds = true
+        }
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
+           let fileSize = attributes[.size] as? Int,
+           let creationDate = attributes[.creationDate] as? Date {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            formatter.timeStyle = .short
+
+            let sizeKB = Double(fileSize) / 1024.0
+            cell.detailTextLabel?.text = String(format: "%.1f KB • %@", sizeKB, formatter.string(from: creationDate))
+        }
 
         return cell
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        if isSelectionMode {
-            selectedItems.insert(indexPath)
-            tableView.reloadRows(at: [indexPath], with: .none)
-        } else {
-            tableView.deselectRow(at: indexPath, animated: true)
-            let selectedURL = items[indexPath.row]
-            var isDirectory: ObjCBool = false
-            FileManager.default.fileExists(atPath: selectedURL.path, isDirectory: &isDirectory)
+        tableView.deselectRow(at: indexPath, animated: true)
 
-            if isDirectory.boolValue {
-                let subdirectoryVC = DirectoryViewController(path: selectedURL)
-                navigationController?.pushViewController(subdirectoryVC, animated: true)
-            } else if selectedURL.pathExtension.lowercased() == "png" {
-                let imageVC = ImageViewController(imagePath: selectedURL)
-                navigationController?.pushViewController(imageVC, animated: true)
+        let selectedURL = items[indexPath.row]
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: selectedURL.path, isDirectory: &isDirectory)
+
+        if isDirectory.boolValue {
+            let subdirectoryVC = DirectoryViewController(path: selectedURL)
+            navigationController?.pushViewController(subdirectoryVC, animated: true)
+        } else if selectedURL.pathExtension.lowercased() == "png" {
+            let imageVC = ImageViewController(imagePath: selectedURL)
+            navigationController?.pushViewController(imageVC, animated: true)
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        let deleteAction = UIContextualAction(style: .destructive, title: "Удалить") { [weak self] _, _, completionHandler in
+            guard let self else {
+                completionHandler(false)
+                return
             }
+
+            let fileURL = items[indexPath.row]
+
+            let alert = UIAlertController(title: "Удаление", message: "Удалить «\(fileURL.lastPathComponent)»?", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { _ in
+                try? FileManager.default.removeItem(at: fileURL)
+                self.loadDirectoryContents()
+                completionHandler(true)
+            })
+            alert.addAction(UIAlertAction(title: "Отмена", style: .cancel) { _ in
+                completionHandler(false)
+            })
+
+            self.present(alert, animated: true)
         }
+
+        deleteAction.backgroundColor = .systemRed
+        return UISwipeActionsConfiguration(actions: [deleteAction])
     }
 
-    override func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
-        if isSelectionMode {
-            selectedItems.remove(indexPath)
-            tableView.reloadRows(at: [indexPath], with: .none)
-        }
-    }
-    
     private func loadDirectoryContents() {
         let unsortedItems = FileManagerService.shared.contentsOfDirectory(at: path)
 
@@ -119,33 +149,7 @@ final class DirectoryViewController: UITableViewController {
 
         tableView.reloadData()
     }
-    
-    private func showDeleteButton() {
-        let button = UIButton(type: .system)
-        button.setTitle("Удалить", for: .normal)
-        button.backgroundColor = .systemRed
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 10
-        button.addTarget(self, action: #selector(confirmDeletion), for: .touchUpInside)
 
-        button.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(button)
-
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            button.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            button.heightAnchor.constraint(equalToConstant: 50)
-        ])
-
-        deleteButton = button
-    }
-
-    private func hideDeleteButton() {
-        deleteButton?.removeFromSuperview()
-        deleteButton = nil
-    }
-    
     @objc private func addFolderTapped() {
         let alert = UIAlertController(title: "Создать папку", message: "Введите имя", preferredStyle: .alert)
         alert.addTextField { $0.placeholder = "Имя папки" }
@@ -160,44 +164,12 @@ final class DirectoryViewController: UITableViewController {
         alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
         present(alert, animated: true)
     }
-    
+
     @objc private func addImageTapped() {
         let picker = UIImagePickerController()
         picker.sourceType = .photoLibrary
         picker.delegate = self
         present(picker, animated: true)
-    }
-    
-    @objc private func toggleSelectionMode() {
-        isSelectionMode.toggle()
-        selectedItems.removeAll()
-        tableView.allowsMultipleSelection = isSelectionMode
-        navigationItem.leftBarButtonItem?.title = isSelectionMode ? "Отмена" : "Выбрать"
-
-        if isSelectionMode {
-            showDeleteButton()
-        } else {
-            hideDeleteButton()
-        }
-    }
-    
-    @objc private func confirmDeletion() {
-        let alert = UIAlertController(title: "Удаление", message: "Удалить выбранные элементы?", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Удалить", style: .destructive) { [weak self] _ in
-            self?.deleteSelectedItems()
-        })
-        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
-        present(alert, animated: true)
-    }
-
-    private func deleteSelectedItems() {
-        let urlsToDelete = selectedItems.map { items[$0.row] }
-        for url in urlsToDelete {
-            try? FileManager.default.removeItem(at: url)
-        }
-
-        toggleSelectionMode()
-        loadDirectoryContents()
     }
 }
 
@@ -207,13 +179,27 @@ extension DirectoryViewController: UIImagePickerControllerDelegate, UINavigation
 
         guard let image = info[.originalImage] as? UIImage else { return }
 
-        let fileName = UUID().uuidString + ".png"
-        FileManagerService.shared.saveImage(image, named: fileName, in: path)
-        loadDirectoryContents()
+        let alert = UIAlertController(title: "Сохранить изображение", message: "Введите имя файла", preferredStyle: .alert)
+        alert.addTextField { textField in
+            textField.placeholder = "Имя файла"
+        }
+
+        let saveAction = UIAlertAction(title: "Сохранить", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let fileNameInput = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fileName = (fileNameInput?.isEmpty == false ? fileNameInput! : UUID().uuidString) + ".png"
+
+            FileManagerService.shared.saveImage(image, named: fileName, in: self.path)
+            self.loadDirectoryContents()
+        }
+
+        alert.addAction(saveAction)
+        alert.addAction(UIAlertAction(title: "Отмена", style: .cancel))
+
+        present(alert, animated: true)
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
         picker.dismiss(animated: true)
     }
-    
 }

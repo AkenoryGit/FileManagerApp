@@ -77,17 +77,21 @@ final class DirectoryViewController: UITableViewController {
             cell.imageView?.layer.masksToBounds = true
         }
 
-        let showSize = UserDefaults.standard.bool(forKey: "showFileSize")
-        if showSize,
-           let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
-           let fileSize = attributes[.size] as? Int,
-           let creationDate = attributes[.creationDate] as? Date {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
+        if !isDirectory.boolValue {
+            let showSize = UserDefaults.standard.bool(forKey: "showFileSize")
+            if showSize,
+               let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
+               let fileSize = attributes[.size] as? Int,
+               let creationDate = attributes[.creationDate] as? Date {
+                let formatter = DateFormatter()
+                formatter.dateStyle = .short
+                formatter.timeStyle = .short
 
-            let sizeKB = Double(fileSize) / 1024.0
-            cell.detailTextLabel?.text = String(format: "%.1f KB • %@", sizeKB, formatter.string(from: creationDate))
+                let sizeKB = Double(fileSize) / 1024.0
+                cell.detailTextLabel?.text = String(format: "%.1f KB • %@", sizeKB, formatter.string(from: creationDate))
+            } else {
+                cell.detailTextLabel?.text = nil
+            }
         } else {
             cell.detailTextLabel?.text = nil
         }
@@ -158,7 +162,8 @@ final class DirectoryViewController: UITableViewController {
             items = folders.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() } +
                     files.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() }
         } else {
-            items = folders + files
+            items = folders.sorted { $0.lastPathComponent.lowercased() > $1.lastPathComponent.lowercased() } +
+                    files.sorted { $0.lastPathComponent.lowercased() > $1.lastPathComponent.lowercased() }
         }
 
         tableView.reloadData()
